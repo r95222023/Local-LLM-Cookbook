@@ -145,34 +145,32 @@ def parse_arg(ai_msg, arg):
         except Exception as e:
             return match.group(1) or ""
 
-
+    
 class CodeAssistant:
-    def __init__(self, llm, context="", max_iterations=5, reflect=False, check_code=False, debug=False):
-        set_debug(debug)
+    def __init__(self, llm, context="", max_iterations=5, reflect=False, check_code=False):
         self.compiled = False
         self.workflow = None
         self.context = context
-
+        
         self.llm = llm
         self.max_iterations = max_iterations
         self.reflect = reflect
         self.check_code = check_code
         # self.retry_cahin = retry_prompt | self.llm # {"task", "reflections", "tool_calls"}
 
-        self.solution_gen_chain = solution_prompt | llm
+        self.solution_gen_chain = solution_prompt| llm
         self.solution_gen_chain_reflect = solution_prompt_reflect | llm
         self.description_gen_chain = description_prompt | llm
         self.imports_gen_chain = imports_prompt | llm
         self.code_gen_chain = code_prompt | llm
-        self.reflect_chain = reflect_prompt | llm
         self.workflow = StateGraph(GraphState)
 
-    def invoke(self, task, context):
+    def invoke(self, task):
         if not self.compiled:
             app = self.compile()
         else:
             app = self.workflow
-        return app.invoke({"context": context, "task": task, "iterations": 0, "messages": []})
+        return app.invoke({"context":concatenated_content, "task": task, "iterations": 0, "messages":[]})
 
     def compile(self):
         workflow = StateGraph(GraphState)
@@ -180,53 +178,55 @@ class CodeAssistant:
         workflow.add_node("description_node", self.description_node)
         workflow.add_node("imports_node", self.imports_node)
         workflow.add_node("code_node", self.code_node)
-        # workflow.add_node("reflect", reflect)
-
+        workflow.add_node("code_check_node", self.code_check_node)
+        workflow.add_node("reflect", self.reflect_node)
+        
         # Build graph
         workflow.add_edge(START, "generate_node")
         workflow.add_edge("generate_node", "description_node")
         workflow.add_edge("description_node", "imports_node")
         workflow.add_edge("imports_node", "code_node")
-        workflow.add_edge("code_node", END)
-        # workflow.add_edge("code_node", "code_check_node")
-        # workflow.add_conditional_edges(
-        #     "code_check_node",
-        #     decide_to_finish,
-        #     {
-        #         "end": END,
-        #         "reflect": "reflect",
-        #         "retry": "description_node",
-        #     },
-        # )
-        # workflow.add_edge("reflect", "generate_node")
+        # workflow.add_edge("code_node", END)
+        workflow.add_edge("code_node", "code_check_node")
+        workflow.add_conditional_edges(
+            "code_check_node",
+            self.decide_to_finish,
+            {
+                "end": END,
+                "reflect": "reflect",
+                "retry": "description_node",
+            },
+        )
+        workflow.add_edge("reflect", "generate_node")
 
+        
         self.workflow = workflow.compile()
         self.compiled = True
         return self.workflow
-
+        
     def generation_node(self, state: GraphState):
         """
         Generate a code solution
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             state (dict): New key added to state, generation
         """
-
+    
         print("---GENERATING SOLUTION---")
-
+    
         # State
         task = state["task"]
         iterations = state["iterations"]
         reflections = state["reflections"]
         error = state["error"]
         messages = state["messages"]
-
+    
         # Increment
         iterations = iterations + 1
-
+        
         # We have been routed back to generation with an error
         if error == "yes":
             messages += [
@@ -236,92 +236,95 @@ class CodeAssistant:
                 )
             ]
             # Solution
-            code_solution = self.solution_gen_chain_reflect.invoke(
-                {"context": self.context, "task": task, "reflections": reflections}).content
+            code_solution = self.solution_gen_chain_reflect.invoke({"context":self.context, "task": task, "reflections": reflections}).content
         else:
-            code_solution = self.solution_gen_chain.invoke({"context": self.context, "task": task}).content
-
+            code_solution = self.solution_gen_chain.invoke({"context":self.context, "task": task}).content
+        
         return {**state, "solution": code_solution, "iterations": iterations, "messages": messages}
+
 
     def description_node(self, state: GraphState):
         """
         Generate a code description
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             state (dict): New key added to state, generation
         """
-
+    
         print("---GENERATING CODE DESCRIPTION---")
-
+    
         # State
         task = state["task"]
         solution = state["solution"]
-
+    
         # Description
         code_description = self.description_gen_chain.invoke(
             {"solution": solution, "task": task}
         ).content
-
+    
         return {**state, "description": code_description}
-
+    
+    
     def imports_node(self, state: GraphState):
         """
         Generate a code imports
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             state (dict): New key added to state, generation
         """
-
+    
         print("---GENERATING IMPORTS BLOCK---")
-
+    
         # State
         task = state["task"]
         solution = state["solution"]
-
+    
         # Description
         code_imports = self.imports_gen_chain.invoke(
             {"solution": solution}
         ).content
-
+    
         return {**state, "imports": code_imports}
-
+    
+    
     def code_node(self, state: GraphState):
         """
         Generate a code parts without imports
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             state (dict): New key added to state, generation
         """
-
+    
         print("---GENERATING CODE BLOCK---")
-
+    
         # State
         task = state["task"]
         solution = state["solution"]
-
+    
         # Description
         code_block = self.code_gen_chain.invoke(
             {"solution": solution}
         ).content
-
+    
         return {**state, "code": code_block}
-
+    
+    
     def code_check_node(self, state: GraphState):
         """
         Check code
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             state (dict): New key added to state, error
         """
@@ -330,14 +333,13 @@ class CodeAssistant:
                 **state,
                 "error": "no",
             }
-
+            
         print("---CHECKING CODE---")
-
+    
         # State
         imports = state["imports"]
         code = state["code"]
-        messages = state["messages"]
-
+    
         # Check imports
         try:
             exec(imports)
@@ -350,7 +352,7 @@ class CodeAssistant:
                 "messages": messages,
                 "error": "yes",
             }
-
+    
         # Check execution
         try:
             exec(imports + "\n" + code)
@@ -363,57 +365,60 @@ class CodeAssistant:
                 "messages": messages,
                 "error": "yes",
             }
-
+    
         # No errors
         print("---NO CODE TEST FAILURES---")
         return {
             **state,
             "error": "no",
         }
-
+    
+    
     def reflect_node(self, state: GraphState):
         """
         Reflect on errors
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             state (dict): New key added to state, generation
         """
-
+    
         print("---GENERATING CODE SOLUTION---")
-
+    
         # State
         messages = state["messages"]
         solution = state["solution"]
         task = state["task"]
-
+    
         # Prompt reflection
-
+    
         # Add reflection
-        reflections = self.reflect_chain.invoke(
+        reflections = reflect_gen_chain.invoke(
             {"task": task, "solution": solution, "messages": messages}
         ).content
         messages += [("assistant", f"Here are reflections on the error: {reflections}")]
         return {**state, "reflections": reflections, "messages": messages}
-
+    
+    
     ### Edges
-
+    
+    
     def decide_to_finish(self, state: GraphState):
         """
         Determines whether to finish.
-
+    
         Args:
             state (dict): The current graph state
-
+    
         Returns:
             str: Next node to call
         """
         error = state["error"]
         iterations = state["iterations"]
-
-        if error == "no" or iterations == self.max_iterations:
+    
+        if error == "no" or iterations == max_iterations:
             print("---DECISION: FINISH---")
             return "end"
         else:
