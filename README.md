@@ -1,9 +1,8 @@
-# Local-LLM-Cookbook
-Local LLM Cookbook is a collection of examples and best practices for enhancing the usability and robustness of local Large Language Models (LLMs). Provide practical examples, optimization tips, and tutorials to make LLMs reliable.
+# Local LLM Cookbook
 
-# LangChain cookbook
+The Local LLM Cookbook offers a collection of examples and best practices for improving the usability and robustness of local Large Language Models (LLMs). It provides practical examples, optimization tips, and tutorials to ensure reliability.
 
-Example code for building applications with Langgraph, focusing on practical and local LLM use cases.
+This cookbook includes example code for building applications with various frameworks, such as LangChain, LangGraph, CrewAI, AutoGen, and LlamaIndex, with a focus on practical and local LLM use cases.
 
 Notebook | Description
 :- | :-
